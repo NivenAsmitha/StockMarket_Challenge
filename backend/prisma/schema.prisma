@@ -1,0 +1,190 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum CompanyStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum StockStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+}
+
+enum OrderStatus {
+  PENDING_APPROVAL
+  OPEN
+  PARTIALLY_FILLED
+  FILLED
+  CANCELLED
+  REJECTED
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  passwordHash      String
+  name              String
+  role              Role      @default(USER)
+  isEmailVerified   Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  emailVerifyToken  String?
+  emailVerifyExpiry DateTime?
+  refreshTokenHash  String?
+
+  balance    Balance?
+  orders     Order[]
+  buyTrades  Trade[]     @relation("BuyerTrades")
+  sellTrades Trade[]     @relation("SellerTrades")
+  portfolios Portfolio[]
+  companies  Company[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Balance {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  totalLkr     Decimal @db.Decimal(20, 4)
+  availableLkr Decimal @db.Decimal(20, 4)
+  lockedLkr    Decimal @db.Decimal(20, 4)
+
+  user User @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Company {
+  id          String        @id @default(uuid())
+  ownerId     String?
+  name        String
+  symbol      String        @unique
+  description String?
+  status      CompanyStatus @default(PENDING)
+
+  owner  User?   @relation(fields: [ownerId], references: [id])
+  stocks Stock[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Stock {
+  id              String      @id @default(uuid())
+  companyId       String
+  symbol          String      @unique
+  name            String
+  totalShares     Decimal     @db.Decimal(20, 4)
+  availableShares Decimal     @db.Decimal(20, 4)
+  lastPrice       Decimal     @default(0) @db.Decimal(20, 4)
+  status          StockStatus @default(ACTIVE)
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  orders     Order[]
+  trades     Trade[]
+  portfolios Portfolio[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Order {
+  id      String @id @default(uuid())
+  userId  String
+  stockId String
+
+  side         OrderSide
+  type         OrderType
+  price        Decimal?    @db.Decimal(20, 4)
+  quantity     Decimal     @db.Decimal(20, 4)
+  remainingQty Decimal     @db.Decimal(20, 4)
+  lockedAmount Decimal     @default(0) @db.Decimal(20, 4)
+  status       OrderStatus @default(OPEN)
+
+  user       User    @relation(fields: [userId], references: [id])
+  stock      Stock   @relation(fields: [stockId], references: [id])
+  buyTrades  Trade[] @relation("BuyOrder")
+  sellTrades Trade[] @relation("SellOrder")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stockId, side, status, price, createdAt])
+  @@index([userId])
+}
+
+model Trade {
+  id          String @id @default(uuid())
+  stockId     String
+  buyerId     String
+  sellerId    String
+  buyOrderId  String
+  sellOrderId String
+
+  price    Decimal @db.Decimal(20, 4)
+  quantity Decimal @db.Decimal(20, 4)
+  total    Decimal @db.Decimal(20, 4)
+
+  stock     Stock @relation(fields: [stockId], references: [id])
+  buyer     User  @relation("BuyerTrades", fields: [buyerId], references: [id])
+  seller    User  @relation("SellerTrades", fields: [sellerId], references: [id])
+  buyOrder  Order @relation("BuyOrder", fields: [buyOrderId], references: [id])
+  sellOrder Order @relation("SellOrder", fields: [sellOrderId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([stockId, createdAt])
+  @@index([buyerId])
+  @@index([sellerId])
+}
+
+model Portfolio {
+  id      String @id @default(uuid())
+  userId  String
+  stockId String
+
+  quantity       Decimal @db.Decimal(20, 4)
+  lockedQuantity Decimal @default(0) @db.Decimal(20, 4)
+  avgBuyPrice    Decimal @default(0) @db.Decimal(20, 4)
+
+  user  User  @relation(fields: [userId], references: [id])
+  stock Stock @relation(fields: [stockId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, stockId])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+}
