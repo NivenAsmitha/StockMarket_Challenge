@@ -1,25 +1,57 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { OrderSide, OrderType } from '@prisma/client';
-import { Type } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 
 export class CreateOrderDto {
+  @ApiProperty({
+    example: 'SPC',
+  })
   @IsString()
   stockSymbol!: string;
 
+  @ApiProperty({
+    enum: OrderSide,
+    example: OrderSide.BUY,
+  })
   @IsEnum(OrderSide)
   side!: OrderSide;
 
+  @ApiProperty({
+    enum: OrderType,
+    example: OrderType.LIMIT,
+  })
   @IsEnum(OrderType)
   type!: OrderType;
 
-  @IsOptional()
-  @Type(() => Number)
+  @ApiPropertyOptional({
+    example: 100,
+  })
+  @ValidateIf((dto: CreateOrderDto) => dto.type === OrderType.LIMIT)
   @IsNumber()
   @Min(0.01)
   price?: number;
 
-  @Type(() => Number)
+  @ApiProperty({
+    example: 1,
+  })
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   quantity!: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Use true for company/market trades that need admin approval. Use false for user-to-user selling stocks.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requiresApproval?: boolean;
 }

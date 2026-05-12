@@ -90,7 +90,7 @@ export function StockDetailPage() {
     event.preventDefault();
 
     const confirmed = window.confirm(
-      `Are you sure you want to ${side} ${quantity} shares of ${symbol}?`,
+      `Are you sure you want to ${side} ${quantity} shares of ${symbol}? This company/market trade needs admin approval.`,
     );
 
     if (!confirmed) {
@@ -108,11 +108,13 @@ export function StockDetailPage() {
         type: OrderType;
         quantity: number;
         price?: number;
+        requiresApproval: boolean;
       } = {
         stockSymbol: symbol,
         side,
         type,
         quantity: Number(quantity),
+        requiresApproval: true,
       };
 
       if (type === "LIMIT") {
@@ -137,7 +139,7 @@ export function StockDetailPage() {
 
       <Page
         title={`${symbol} Trading`}
-        subtitle="Place buy/sell orders and watch live order book updates."
+        subtitle="Company/market trades require admin approval before they enter the order book."
       >
         <div className="grid gap-6 lg:grid-cols-3">
           <Card>
@@ -157,11 +159,13 @@ export function StockDetailPage() {
 
           <Card className="lg:col-span-2">
             <h2 className="mb-2 text-2xl font-black text-slate-900">
-              Place Order
+              Place Company / Market Order
             </h2>
+
             <p className="mb-5 text-sm text-slate-500">
-              After submitting, the system accepts the order. It fills only when
-              a matching opposite order exists.
+              This trade request is submitted to admin first. After admin
+              approval, it enters the order book and matches with opposite
+              orders.
             </p>
 
             {message && (
@@ -196,7 +200,7 @@ export function StockDetailPage() {
               </select>
 
               <input
-                className="rounded-xl border border-slate-300 px-3 py-3 outline-none focus:border-blue-500"
+                className="rounded-xl border border-slate-300 px-3 py-3 outline-none focus:border-blue-500 disabled:bg-slate-100"
                 placeholder="Price"
                 value={price}
                 disabled={type === "MARKET"}
@@ -211,13 +215,14 @@ export function StockDetailPage() {
               />
 
               <button
+                type="submit"
                 className={
                   side === "BUY"
                     ? "rounded-xl bg-green-600 px-4 py-3 font-black text-white hover:bg-green-700"
                     : "rounded-xl bg-red-600 px-4 py-3 font-black text-white hover:bg-red-700"
                 }
               >
-                {side}
+                Submit {side}
               </button>
             </form>
           </Card>
@@ -227,21 +232,25 @@ export function StockDetailPage() {
 
         <Card className="mt-6">
           <h2 className="mb-2 text-xl font-black text-slate-900">
-            How order acceptance works
+            How this order works
           </h2>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <InfoBox
-              title="1. Accepted"
-              text="Your order is accepted when the backend creates it successfully."
+              title="1. Submitted"
+              text="Your order is saved by the backend."
             />
             <InfoBox
-              title="2. Waiting"
-              text="If no matching opposite order exists, status stays OPEN in the order book."
+              title="2. Admin Approval"
+              text="Company/market trades wait for admin approval first."
             />
             <InfoBox
-              title="3. Filled"
-              text="When BUY price meets SELL price, matching engine creates a trade."
+              title="3. Order Book"
+              text="After approval, the order becomes OPEN and waits for a match."
+            />
+            <InfoBox
+              title="4. Filled"
+              text="When buy and sell prices match, the trade is completed."
             />
           </div>
         </Card>
@@ -278,7 +287,7 @@ export function StockDetailPage() {
                 {orderBook.buyOrders.length === 0 && (
                   <tr>
                     <td className="py-4 text-slate-500" colSpan={3}>
-                      No buy orders.
+                      No approved buy orders in the order book.
                     </td>
                   </tr>
                 )}
@@ -317,7 +326,7 @@ export function StockDetailPage() {
                 {orderBook.sellOrders.length === 0 && (
                   <tr>
                     <td className="py-4 text-slate-500" colSpan={3}>
-                      No sell orders.
+                      No approved sell orders in the order book.
                     </td>
                   </tr>
                 )}
@@ -356,8 +365,8 @@ export function StockDetailPage() {
               {trades.length === 0 && (
                 <tr>
                   <td className="py-4 text-slate-500" colSpan={4}>
-                    No trades yet. A trade appears when buy and sell orders
-                    match.
+                    No trades yet. A trade appears when approved buy and sell
+                    orders match.
                   </td>
                 </tr>
               )}
@@ -378,7 +387,7 @@ function OrderAcceptedCard({ order }: { order: Order }) {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-sm font-black uppercase tracking-wide text-blue-700">
-            Order accepted by system
+            Order submitted successfully
           </p>
           <h2 className="mt-1 text-2xl font-black text-slate-950">
             {order.side} {order.quantity} shares
@@ -389,7 +398,7 @@ function OrderAcceptedCard({ order }: { order: Order }) {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-4">
-          <SmallMetric title="Status" value={order.status} />
+          <SmallMetric title="Status" value={formatStatus(order.status)} />
           <SmallMetric title="Filled" value={filledQuantity.toString()} />
           <SmallMetric title="Remaining" value={order.remainingQty} />
           <SmallMetric title="Price" value={order.price ?? "Market"} />
@@ -423,6 +432,10 @@ function InfoBox({ title, text }: { title: string; text: string }) {
 }
 
 function getOrderSuccessMessage(order: Order) {
+  if (order.status === "PENDING_APPROVAL") {
+    return "Order submitted successfully. Waiting for admin approval.";
+  }
+
   if (order.status === "FILLED") {
     return "Order accepted and fully filled. Trade completed successfully.";
   }
@@ -435,10 +448,14 @@ function getOrderSuccessMessage(order: Order) {
     return "Order accepted into the order book. Waiting for a matching opposite order.";
   }
 
-  return `Order accepted. Current status: ${order.status}`;
+  return `Order submitted. Current status: ${formatStatus(order.status)}`;
 }
 
 function getOrderExplanation(order: Order) {
+  if (order.status === "PENDING_APPROVAL") {
+    return "This company/market order is waiting for admin approval. It will not appear in the order book until admin approves it.";
+  }
+
   if (order.status === "FILLED") {
     return "Your order matched completely with an opposite order. You can now see the execution in My Trades.";
   }
@@ -449,14 +466,18 @@ function getOrderExplanation(order: Order) {
 
   if (order.status === "OPEN") {
     if (order.side === "BUY") {
-      return "Your buy order is waiting because there is no sell order at your price or lower. Example: if you buy at 100, someone must sell at 100 or less.";
+      return "Your buy order is approved and waiting because there is no sell order at your price or lower.";
     }
 
-    return "Your sell order is waiting because there is no buy order at your price or higher. Example: if you sell at 100, someone must buy at 100 or higher.";
+    return "Your sell order is approved and waiting because there is no buy order at your price or higher.";
   }
 
   if (order.status === "CANCELLED") {
     return "This order was cancelled. Any locked balance or locked shares should be released.";
+  }
+
+  if (order.status === "REJECTED") {
+    return "This order was rejected by admin. Any locked balance or locked shares should be released.";
   }
 
   return "This order was not executed.";
@@ -464,26 +485,33 @@ function getOrderExplanation(order: Order) {
 
 function getOrderStatusBadge(order: Order) {
   const className =
-    order.status === "OPEN"
-      ? "bg-yellow-100 text-yellow-800"
-      : order.status === "FILLED"
-        ? "bg-green-100 text-green-800"
-        : order.status === "PARTIALLY_FILLED"
-          ? "bg-blue-100 text-blue-800"
-          : "bg-slate-100 text-slate-700";
-
-  const label =
-    order.status === "OPEN"
-      ? "Waiting"
-      : order.status === "FILLED"
-        ? "Filled"
-        : order.status === "PARTIALLY_FILLED"
-          ? "Partial"
-          : order.status;
+    order.status === "PENDING_APPROVAL"
+      ? "bg-purple-100 text-purple-800"
+      : order.status === "OPEN"
+        ? "bg-yellow-100 text-yellow-800"
+        : order.status === "FILLED"
+          ? "bg-green-100 text-green-800"
+          : order.status === "PARTIALLY_FILLED"
+            ? "bg-blue-100 text-blue-800"
+            : order.status === "REJECTED"
+              ? "bg-red-100 text-red-800"
+              : "bg-slate-100 text-slate-700";
 
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-black ${className}`}>
-      {label}
+      {formatStatus(order.status)}
     </span>
   );
+}
+
+function formatStatus(status: Order["status"]) {
+  if (status === "PENDING_APPROVAL") {
+    return "Pending Approval";
+  }
+
+  if (status === "PARTIALLY_FILLED") {
+    return "Partially Filled";
+  }
+
+  return status.charAt(0) + status.slice(1).toLowerCase();
 }

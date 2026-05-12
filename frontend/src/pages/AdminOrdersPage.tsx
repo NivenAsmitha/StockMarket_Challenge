@@ -8,6 +8,8 @@ import type { Order, User } from "../types";
 export function AdminOrdersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     const meResponse = await api.get<User>("/auth/me");
@@ -29,35 +31,93 @@ export function AdminOrdersPage() {
     };
   }, [load]);
 
+  async function approveOrder(order: Order) {
+    const confirmed = window.confirm(
+      `Approve ${order.side} order for ${order.stock?.symbol}?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setMessage("");
+    setError("");
+
+    try {
+      await api.patch(`/orders/${order.id}/approve`);
+      setMessage("Order approved. Matching engine checked automatically.");
+      await load();
+    } catch {
+      setError("Could not approve order.");
+    }
+  }
+
+  async function rejectOrder(order: Order) {
+    const confirmed = window.confirm(
+      `Reject ${order.side} order for ${order.stock?.symbol}?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setMessage("");
+    setError("");
+
+    try {
+      await api.patch(`/orders/${order.id}/reject`);
+      setMessage("Order rejected. Locked money/shares released.");
+      await load();
+    } catch {
+      setError("Could not reject order.");
+    }
+  }
+
   return (
     <>
       <Navbar userRole={currentUser?.role} />
 
       <Page
         title="Admin Orders"
-        subtitle="View all user orders. Buy and sell orders are processed automatically without admin approval."
+        subtitle="Company/market trades need admin approval. User-to-user selling stock trades are automatic."
       >
+        {message && (
+          <div className="mb-6 rounded-2xl border border-green-200 bg-green-50 p-4 font-bold text-green-700">
+            {message}
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 font-bold text-red-700">
+            {error}
+          </div>
+        )}
+
         <Card className="mb-6">
           <h2 className="text-xl font-black text-slate-900">
             Order status guide
           </h2>
 
-          <div className="mt-4 grid gap-4 md:grid-cols-4">
+          <div className="mt-4 grid gap-4 md:grid-cols-5">
+            <GuideBox
+              title="PENDING"
+              text="Company/market order is waiting for admin approval."
+            />
             <GuideBox
               title="OPEN"
-              text="Order is active and waiting for a matching opposite order."
+              text="Approved or automatic order waiting for opposite order."
             />
             <GuideBox
               title="PARTIAL"
-              text="Some quantity filled. Remaining quantity is still active."
+              text="Some quantity filled. Remaining is active."
             />
             <GuideBox
               title="FILLED"
-              text="Order fully matched. Portfolio and trades are updated."
+              text="Fully matched. Portfolio and trades updated."
             />
             <GuideBox
               title="CANCELLED"
-              text="User cancelled the order. Locked funds/shares released."
+              text="Cancelled by user. Locked funds/shares released."
             />
           </div>
         </Card>
@@ -76,6 +136,7 @@ export function AdminOrdersPage() {
                   <th className="p-4">Remaining</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">What next?</th>
+                  <th className="p-4">Action</th>
                 </tr>
               </thead>
 
@@ -121,12 +182,38 @@ export function AdminOrdersPage() {
                         {getNextStep(order)}
                       </p>
                     </td>
+
+                    <td className="p-4">
+                      {order.status === "PENDING_APPROVAL" ? (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => approveOrder(order)}
+                            className="rounded-xl bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700"
+                          >
+                            Approve
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => rejectOrder(order)}
+                            className="rounded-xl bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-700"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                          No action
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
 
                 {orders.length === 0 && (
                   <tr>
-                    <td className="p-4 text-slate-500" colSpan={9}>
+                    <td className="p-4 text-slate-500" colSpan={10}>
                       No orders found.
                     </td>
                   </tr>
@@ -151,15 +238,17 @@ function GuideBox({ title, text }: { title: string; text: string }) {
 
 function StatusBadge({ status }: { status: Order["status"] }) {
   const className =
-    status === "OPEN"
-      ? "bg-yellow-100 text-yellow-700"
-      : status === "FILLED"
-        ? "bg-green-100 text-green-700"
-        : status === "PARTIALLY_FILLED"
-          ? "bg-blue-100 text-blue-700"
-          : status === "REJECTED"
-            ? "bg-red-100 text-red-700"
-            : "bg-slate-100 text-slate-700";
+    status === "PENDING_APPROVAL"
+      ? "bg-purple-100 text-purple-700"
+      : status === "OPEN"
+        ? "bg-yellow-100 text-yellow-700"
+        : status === "FILLED"
+          ? "bg-green-100 text-green-700"
+          : status === "PARTIALLY_FILLED"
+            ? "bg-blue-100 text-blue-700"
+            : status === "REJECTED"
+              ? "bg-red-100 text-red-700"
+              : "bg-slate-100 text-slate-700";
 
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-black ${className}`}>
@@ -169,6 +258,10 @@ function StatusBadge({ status }: { status: Order["status"] }) {
 }
 
 function getNextStep(order: Order) {
+  if (order.status === "PENDING_APPROVAL") {
+    return "Admin must approve or reject this company/market order.";
+  }
+
   if (order.status === "OPEN") {
     if (order.side === "BUY") {
       return `Waiting for a SELL order for ${
@@ -176,7 +269,7 @@ function getNextStep(order: Order) {
       } at ${order.price} or lower.`;
     }
 
-    return `This stock is listed for buyers. Waiting for a BUY order at ${order.price} or higher.`;
+    return `Listed for buyers. Waiting for a BUY order at ${order.price} or higher.`;
   }
 
   if (order.status === "PARTIALLY_FILLED") {
@@ -188,7 +281,11 @@ function getNextStep(order: Order) {
   }
 
   if (order.status === "CANCELLED") {
-    return "Order was cancelled. No further action needed.";
+    return "Order was cancelled. No action needed.";
+  }
+
+  if (order.status === "REJECTED") {
+    return "Order was rejected. No action needed.";
   }
 
   return "No action needed.";

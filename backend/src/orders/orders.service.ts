@@ -15,6 +15,8 @@ import { MatchingEngineService } from '../matching-engine/matching-engine.servic
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 
+const PENDING_APPROVAL = 'PENDING_APPROVAL' as const;
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -137,6 +139,8 @@ export class OrdersService {
           });
         }
 
+        const needsApproval = dto.requiresApproval === true;
+
         const order = await tx.order.create({
           data: {
             userId,
@@ -147,7 +151,7 @@ export class OrdersService {
             quantity,
             remainingQty: quantity,
             lockedAmount,
-            status: OrderStatus.OPEN,
+            status: needsApproval ? PENDING_APPROVAL : OrderStatus.OPEN,
           },
           include: {
             stock: true,
@@ -156,7 +160,9 @@ export class OrdersService {
           },
         });
 
-        await this.matchingEngine.matchOrder(tx, order.id);
+        if (!needsApproval) {
+          await this.matchingEngine.matchOrder(tx, order.id);
+        }
 
         return tx.order.findUnique({
           where: { id: order.id },
@@ -196,31 +202,89 @@ export class OrdersService {
   }
 
   async approveOrder(orderId: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-    });
+    return this.prisma.$transaction(
+      async (tx) => {
+        const order = await tx.order.findUnique({
+          where: { id: orderId },
+          include: {
+            stock: true,
+          },
+        });
 
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
+        if (!order) {
+          throw new NotFoundException('Order not found');
+        }
 
-    throw new BadRequestException(
-      'Order approval is disabled. Orders are processed automatically.',
+        if (order.status !== PENDING_APPROVAL) {
+          throw new BadRequestException(
+            'Only pending approval orders can be approved',
+          );
+        }
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.OPEN,
+          },
+        });
+
+        await this.matchingEngine.matchOrder(tx, order.id);
+
+        return tx.order.findUnique({
+          where: { id: order.id },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            stock: true,
+            buyTrades: true,
+            sellTrades: true,
+          },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
     );
   }
 
   async rejectOrder(orderId: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          stock: true,
+        },
+      });
+
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+
+      if (order.status !== PENDING_APPROVAL) {
+        throw new BadRequestException(
+          'Only pending approval orders can be rejected',
+        );
+      }
+
+      await this.releaseLockedResources(tx, order);
+
+      return tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.REJECTED,
+          remainingQty: new Prisma.Decimal(0),
+          lockedAmount: new Prisma.Decimal(0),
+        },
+        include: {
+          stock: true,
+        },
+      });
     });
-
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-
-    throw new BadRequestException(
-      'Order rejection is disabled. Users can cancel their own open orders.',
-    );
   }
 
   async findMine(userId: string) {
@@ -274,10 +338,13 @@ export class OrdersService {
       }
 
       if (
+        order.status !== PENDING_APPROVAL &&
         order.status !== OrderStatus.OPEN &&
         order.status !== OrderStatus.PARTIALLY_FILLED
       ) {
-        throw new BadRequestException('Only open orders can be cancelled');
+        throw new BadRequestException(
+          'Only pending or open orders can be cancelled',
+        );
       }
 
       await this.releaseLockedResources(tx, order);
@@ -286,8 +353,8 @@ export class OrdersService {
         where: { id: order.id },
         data: {
           status: OrderStatus.CANCELLED,
-          remainingQty: '0',
-          lockedAmount: '0',
+          remainingQty: new Prisma.Decimal(0),
+          lockedAmount: new Prisma.Decimal(0),
         },
         include: {
           stock: true,
